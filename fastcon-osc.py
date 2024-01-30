@@ -12,6 +12,7 @@ BLE_CMD_RETRY_CNT = 1
 BLE_CMD_ADVERTISE_LENGTH = 3000
 SEND_COUNT = 1
 SEND_SEQ = 0
+DEBUG = 0
 
 
 def reverse_8(d):
@@ -117,11 +118,12 @@ def get_rf_payload(addr, data):
     resultbuf[0x10] = 0x0f
     resultbuf[0x11] = 0x55
     
-    #print("")
-    #print("get_rf_payload")
-    #print("------------------------")
-    #print("addr:", bytes(addr).hex())
-    #print("data:", bytes(data).hex())
+    if DEBUG:
+        print("")
+        print("get_rf_payload")
+        print("------------------------")
+        print("addr:", bytes(addr).hex())
+        print("data:", bytes(data).hex())
 
     # reverse copy the address
     for i in range(len(addr)):
@@ -132,8 +134,9 @@ def get_rf_payload(addr, data):
     for i in range(inverse_offset, inverse_offset + len(addr) + 3):
         resultbuf[i] = reverse_8(resultbuf[i])
 
-    #print("inverse_offset:", inverse_offset)
-    #print("inverse_offset addr.len + 3:", (inverse_offset + len(addr) + 3))
+    if DEBUG:
+        print("inverse_offset:", inverse_offset)
+        print("inverse_offset addr.len + 3:", (inverse_offset + len(addr) + 3))
 
     crc = crc16(addr, data)
     resultbuf[result_data_size] = crc & 0xFF
@@ -226,8 +229,6 @@ def single_control(addr, key, data, delay):
 
 
 def fastcon_set_on_off(address, key, on, brightness):
-    #print("brightness:", str(brightness))
-
     command = [0] * 1
     command[0] = 0
 
@@ -308,8 +309,6 @@ def run_btmgmt_adv_command(shell_process, instance_id, command):
     shell_command = "add-adv -d 02011a1bfff0ff" + bytes(command).hex() + f" {instance_id}\n"
     shell_process.stdin.write(str.encode(shell_command))
     shell_process.stdin.flush()
-    # TODO: read from stdout, and if there's an error, restart the bluetooth service
-    #print(shell_process.stdout.readline())
     shell_process.stdout.flush()
 
 
@@ -370,17 +369,12 @@ class BtmgmtShell:
         self._process = Popen(['/usr/bin/bash', '-c', 'btmgmt'], stdin=PIPE, stdout=PIPE)
 
     def run_command(self, command):
-        # output = ""
         with self._lock:
             self._process.stdin.write(f"{command}\n".encode())
             self._process.stdin.flush()
-            print(self._process.stdout.readline())
-        #     output = self._process.stdout.readline()
-            #print(self._process.stdout.readline())
+            if DEBUG:
+                print(self._process.stdout.readline())
             self._process.stdout.flush()
-
-        # if on_complete_callback is not None:
-        #     on_complete_callback(output)
 
     def stop(self):
         with self._lock:
@@ -395,10 +389,15 @@ def main():
     parser.add_argument('-p', '--port', type=int, help="MQTT broker host port", default=5005)
     parser.add_argument('-k', '--key', type=str,help="FastCon encryption key (8 bytes)", default='5e367bc4')
     parser.add_argument('-n', '--num-lights', type=int, help="Number of lights", default=1)
+    parser.add_argument('-d', '--debug', action='store_true')
     args = parser.parse_args()
 
     if len(args.key) != 8:
         raise ValueError("Key argument must be a sequence of 8 hexadecimal digits")
+
+    if args.debug:
+        global DEBUG
+        DEBUG = True
 
     interface = args.interface
     addr = args.addr
@@ -430,7 +429,8 @@ def main():
         # a given light would be overridden by the advertisement for another. So, 
         # using a different instance ID for each light allows them to be broadcast 
         # simultaneously (or at least independently).
-        print(address, args)
+        if DEBUG:
+            print(address, args)
         device_address = int(address.split("/")[2])
         light = lights[device_address - 1]
         shell = shells[count % len(shells)]
@@ -440,7 +440,8 @@ def main():
         inc_count()
 
     def on_osc_rgb(address, *args):
-        print(address, args)
+        if DEBUG:
+            print(address, args)
         device_address = int(address.split("/")[2])
         light = lights[device_address - 1]
         shell = shells[count % len(shells)]
@@ -450,7 +451,8 @@ def main():
         inc_count()
 
     def on_osc_color_temp(address, *args):
-        print(address, args)
+        if DEBUG:
+            print(address, args)
         device_address = int(address.split("/")[2])
         light = lights[device_address - 1]
         shell = shells[count % len(shells)]
@@ -460,7 +462,8 @@ def main():
         inc_count()
 
     def on_osc_state(address, *args):
-        print(address, args)
+        if DEBUG:
+            print(address, args)
         device_address = int(address.split("/")[2])
         light = lights[device_address - 1]
         shell = shells[count % len(shells)]

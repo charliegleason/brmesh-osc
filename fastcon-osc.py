@@ -1,9 +1,9 @@
 import argparse
-from itertools import pairwise
+import threading
 from subprocess import Popen, PIPE
 from typing import List, Dict, Union
-import paho.mqtt.client as mqtt
-import json
+from pythonosc.dispatcher import Dispatcher
+from pythonosc.osc_server import ThreadingOSCUDPServer
 
 #key = [0x8c, 0x89, 0x45, 0x94]        # See README how to get your secret key
 DEFAULT_KEY = [0x5e, 0x36, 0x7b, 0xc4]   
@@ -89,6 +89,7 @@ def package_ble_fastcon_body(i, i2, sequence, safe_key, forward, data, key):
         if j == 3:
             continue
         checksum = (checksum + body[j]) & 0xff
+
 
     body[3] = checksum
 
@@ -224,7 +225,7 @@ def single_control(addr, key, data, delay):
     return ble_adv_cmd
 
 
-def set_on_off(address, key, on, brightness):
+def fastcon_set_on_off(address, key, on, brightness):
     #print("brightness:", str(brightness))
 
     command = [0] * 1
@@ -236,7 +237,7 @@ def set_on_off(address, key, on, brightness):
     return single_control(address, key, command, 0)
 
 
-def set_brightness(address, key, on, brightness):
+def fastcon_set_brightness(address, key, on, brightness):
     command = [0] * 1
     command[0] = 0
 
@@ -246,7 +247,7 @@ def set_brightness(address, key, on, brightness):
     return single_control(address, key, command, 0)
 
 
-def set_warm_white(address, key, on, brightness, i5, i6):
+def fastcon_set_warm_white(address, key, on, brightness, i5, i6):
     command = [0] * 6
     command[0] = 0
     command[4] = i5 & 0xFF
@@ -258,7 +259,7 @@ def set_warm_white(address, key, on, brightness, i5, i6):
     return single_control(address, key, command, 0)
 
 
-def set_color(address, key, on, brightness, r, g, b, abs_):
+def fastcon_set_color(address, key, on, brightness, r, g, b, abs_):
     command = [0] * 6
     color_normalization = 1
     command[0] = 0
@@ -299,6 +300,10 @@ def make_add_adv_packet(controller_id, instance_id, flags, duration, timeout,
     # (since the AddAdvertising command doesn't seem to work with btsocket.send())
 
 
+def make_fastcon_add_adv_command(data, instance_id):
+    return f"add-adv -d 02011a1bfff0ff{bytes(data).hex()} {instance_id}"
+
+
 def run_btmgmt_adv_command(shell_process, instance_id, command):
     shell_command = "add-adv -d 02011a1bfff0ff" + bytes(command).hex() + f" {instance_id}\n"
     shell_process.stdin.write(str.encode(shell_command))
@@ -308,90 +313,173 @@ def run_btmgmt_adv_command(shell_process, instance_id, command):
     shell_process.stdout.flush()
 
 
+class FastConLight:
+    def __init__(self, address, key):
+        self.address = address
+        self.key = key
+        self.state = False
+        self.brightness = 0
+        self.warm_white = 0
+        self.r = 0
+        self.g = 0
+        self.b = 0
+        self._lock = threading.Lock()
+
+    def set_state(self, shell, state):
+        with self._lock:
+            self.state = int(state)
+        instance_id = self.address
+        payload = fastcon_set_on_off(self.address, self.key, self.state, self.brightness)
+        command = make_fastcon_add_adv_command(payload, instance_id)
+        shell.run_command(command)
+
+    def set_brightness(self, shell, brightness):
+        with self._lock:
+            self.brightness = brightness
+        instance_id = self.address
+        payload = fastcon_set_brightness(self.address, self.key, self.state, brightness)
+        command = make_fastcon_add_adv_command(payload, instance_id)
+        shell.run_command(command)
+
+    def set_warm_white(self, shell, value):
+        with self._lock:
+            self.warm_white = value
+        instance_id = self.address
+        payload = fastcon_set_warm_white(self.address, self.key, self.state, self.brightness, 127, 127)
+        command = make_fastcon_add_adv_command(payload, instance_id)
+        shell.run_command(command)
+
+    def set_rgb(self, shell, r, g, b):
+        with self._lock:
+            self.r = r
+            self.g = g
+            self.b = b
+        instance_id = self.address
+        payload = fastcon_set_color(self.address, self.key, self.state, self.brightness, r, g, b, True)
+        command = make_fastcon_add_adv_command(payload, instance_id)
+        shell.run_command(command)
+
+
+class BtmgmtShell:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._process = None
+
+    def start(self):
+        # An ugly hack that `man btmgmt` specifically recommends against, but it's easy and it works
+        self._process = Popen(['/usr/bin/bash', '-c', 'btmgmt'], stdin=PIPE, stdout=PIPE)
+
+    def run_command(self, command):
+        # output = ""
+        with self._lock:
+            self._process.stdin.write(f"{command}\n".encode())
+            self._process.stdin.flush()
+            print(self._process.stdout.readline())
+        #     output = self._process.stdout.readline()
+            #print(self._process.stdout.readline())
+            self._process.stdout.flush()
+
+        # if on_complete_callback is not None:
+        #     on_complete_callback(output)
+
+    def stop(self):
+        with self._lock:
+            self._process.stdin.close()
+            self._process.wait()
+
+
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--interface', type=str, help="The name of the Bluetooth interface to use (e.g. hci0)", default="hci0")
     parser.add_argument('-a', '--addr', type=str, help="MQTT broker host IP address",  default='127.0.0.1')
-    parser.add_argument('-p', '--port', type=int, help="MQTT broker host port", default='1883')
+    parser.add_argument('-p', '--port', type=int, help="MQTT broker host port", default=5005)
     parser.add_argument('-k', '--key', type=str,help="FastCon encryption key (8 bytes)", default='5e367bc4')
+    parser.add_argument('-n', '--num-lights', type=int, help="Number of lights", default=1)
     args = parser.parse_args()
 
+    if len(args.key) != 8:
+        raise ValueError("Key argument must be a sequence of 8 hexadecimal digits")
+
+    interface = args.interface
     addr = args.addr
     port = args.port
-    key = [hex(int(f"{a}{b}", 16)) for a, b in pairwise(args.key)]
+    key = [int(f"{a}{b}", 16) for a, b in zip(args.key[0::2], args.key[1::2])]
+    num_lights = args.num_lights
+
+    lights = [FastConLight(i + 1, key) for i in range(num_lights)]
+
+    shells = [BtmgmtShell() for _ in range(60)]
+    for shell in shells:
+        shell.start()
+        shell.run_command(f"select {interface}")
+    shells[0].run_command("power on")
 
     global count
+    global count_lock 
     count = 0
+    count_lock = threading.Lock()
 
-    # This might be the worst hack I've ever written
-    processes = [Popen(['/usr/bin/bash', '-c', 'btmgmt'], stdin=PIPE, stdout=PIPE) for _ in range(60)]
+    def inc_count():
+        with count_lock:
+            global count
+            count += 1
 
-    for process in processes:
-        process.stdin.write(b'select hci0\n')
-        process.stdin.flush()
+    def on_osc_brightness(address, *args):
+        # Using the same instance ID will update an existing advertising instance.
+        # With multiple lights, this would be undesirable, since the advertisement for 
+        # a given light would be overridden by the advertisement for another. So, 
+        # using a different instance ID for each light allows them to be broadcast 
+        # simultaneously (or at least independently).
+        print(address, args)
+        device_address = int(address.split("/")[2])
+        light = lights[device_address - 1]
+        shell = shells[count % len(shells)]
+        brightness = int(args[0])
 
-    processes[0].stdin.write(b'power on\n')
+        light.set_brightness(shell, brightness)
+        inc_count()
 
-    def on_mqtt_connect(client, userdata, flags, rc):
-        print("Connected with result code " + str(rc))
-        client.subscribe("brMesh/#")
+    def on_osc_rgb(address, *args):
+        print(address, args)
+        device_address = int(address.split("/")[2])
+        light = lights[device_address - 1]
+        shell = shells[count % len(shells)]
+        r, g, b = (int(arg) for arg in args[:3])
 
-    def on_mqtt_message(client, userdata, msg):
-        topic = msg.topic
-        payload = msg.payload
+        light.set_rgb(shell, r, g, b)
+        inc_count()
 
-        if "/" in topic:
-            topic_path = topic.split("/")
+    def on_osc_color_temp(address, *args):
+        print(address, args)
+        device_address = int(address.split("/")[2])
+        light = lights[device_address - 1]
+        shell = shells[count % len(shells)]
+        color_temp = int(args[0])
 
-            if topic_path[0] == "brMesh":
-                address = int(topic_path[1])
+        light.set_warm_white(shell, color_temp)
+        inc_count()
 
-                if topic_path[2] == "set":
-                    global count
-                    brightness = 0
-                    # Using the same instance ID will update an existing advertising instance.
-                    # With multiple lights, this would be undesirable, since the advertisement for 
-                    # a given light would be overridden by the advertisement for another. So, 
-                    # using a different instance ID for each light allows them to be broadcast 
-                    # simultaneously (or at least independently).
-                    instance_id = address
-                    payload = json.loads(payload.decode())
+    def on_osc_state(address, *args):
+        print(address, args)
+        device_address = int(address.split("/")[2])
+        light = lights[device_address - 1]
+        shell = shells[count % len(shells)]
+        state = int(args[0])
 
-                    if "color" in payload:
-                        r, g, b = (payload["color"]["r"], payload["color"]["g"], payload["color"]["b"])
-                        if "brightness" in payload:
-                            brightness = payload["brightness"]
-                        command = set_color(address, key, 1, brightness, r, g, b, True)
-                        run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
-                        count += 1
-                    elif "brightness" in payload:
-                        nb = payload["brightness"]
-                        command = set_brightness(address, key, 1, nb)
-                        run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
-                        count += 1
-                    elif "color_temp" in payload:
-                        if payload["color_temp"] == 500:
-                            command = set_warm_white(address, key, 1, brightness, 127, 127)
-                            run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
-                            count += 1
-                    else:
-                        if "state" in payload:
-                            if payload["state"] == "ON":  # last state
-                                command = set_on_off(address, key, 1, brightness)
-                                run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
-                                count += 1
-                            else:
-                                command = set_on_off(address, key, 0, 0)
-                                run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
-                                count += 1
+        light.set_state(shell, state)
+        inc_count()
 
-    client = mqtt.Client()
-    client.on_connect = on_mqtt_connect
-    client.on_message = on_mqtt_message
-    client.connect(addr, port, 60)
-    client.loop_forever()
+    dispatcher = Dispatcher()
+    dispatcher.map('/brmesh/*/brightness', on_osc_brightness)
+    dispatcher.map('/brmesh/*/rgb', on_osc_rgb)
+    dispatcher.map('/brmesh/*/color_temp', on_osc_color_temp)
+    dispatcher.map('/brmesh/*/state', on_osc_state)
 
-    process.stdin.close()
-    process.wait()
+    server = ThreadingOSCUDPServer((addr, port), dispatcher)
+    server.serve_forever()
+
+    for shell in shells:
+        shell.stop()
 
 
 if __name__ == '__main__':

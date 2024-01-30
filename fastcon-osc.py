@@ -386,7 +386,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--interface', type=str, help="The name of the Bluetooth interface to use (e.g. hci0)", default="hci0")
     parser.add_argument('-a', '--addr', type=str, help="MQTT broker host IP address",  default='127.0.0.1')
-    parser.add_argument('-p', '--port', type=int, help="MQTT broker host port", default=5005)
+    parser.add_argument('-p', '--port', type=int, help="MQTT broker host port", default=10000)
     parser.add_argument('-k', '--key', type=str,help="FastCon encryption key (8 bytes)", default='5e367bc4')
     parser.add_argument('-n', '--num-lights', type=int, help="Number of lights", default=1)
     parser.add_argument('-d', '--debug', action='store_true')

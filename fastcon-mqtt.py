@@ -1,12 +1,12 @@
 import argparse
+from itertools import pairwise
 from subprocess import Popen, PIPE
 from typing import List, Dict, Union
 import paho.mqtt.client as mqtt
 import json
 
-my_mqtt_server = "127.0.0.1"            # Your MQTT server IP
-my_key = [0x8c, 0x89, 0x45, 0x94]        # See README how to get your secret key
-default_key = [0x5e, 0x36, 0x7b, 0xc4]   
+#key = [0x8c, 0x89, 0x45, 0x94]        # See README how to get your secret key
+DEFAULT_KEY = [0x5e, 0x36, 0x7b, 0xc4]   
 DEFAULT_BLE_FASTCON_ADDRESS = [0xC1, 0xC2, 0xC3]
 BLE_CMD_RETRY_CNT = 1
 BLE_CMD_ADVERTISE_LENGTH = 3000
@@ -97,10 +97,10 @@ def package_ble_fastcon_body(i, i2, sequence, safe_key, forward, data, key):
         body.append(0)
 
     for j in range(4):
-        body[j] = default_key[j & 3] ^ body[j]
+        body[j] = DEFAULT_KEY[j & 3] ^ body[j]
 
     for j in range(12):
-        body[4 + j] = my_key[j & 3] ^ body[4 + j]
+        body[4 + j] = key[j & 3] ^ body[4 + j]
 
     return body
 
@@ -219,8 +219,8 @@ def single_control(addr, key, data, delay):
                                                     (addr > 256) & 0xFF,  # use_22_data
                                                     (addr // 256) & 0xFF  # i2
                                                     )
-    ble_adv_cmd_btmgmt = "btmgmt add-adv -d 02011a1bfff0ff" + bytes(ble_adv_cmd).hex() + " 1"
-    print(f"Advertisement command: {ble_adv_cmd_btmgmt}")
+    #ble_adv_cmd_btmgmt = "btmgmt add-adv -d 02011a1bfff0ff" + bytes(ble_adv_cmd).hex() + " 1"
+    #print(f"Advertisement command: {ble_adv_cmd_btmgmt}")
     return ble_adv_cmd
 
 
@@ -309,19 +309,20 @@ def run_btmgmt_adv_command(shell_process, instance_id, command):
 
 
 def main():
-    # TODO: add command line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument('-h', '--host', help="MQTT broker host IP address")
-    parser.add_argument('-p', '--port', help="MQTT broker host port")
-    parser.add_argument('-k', '--key', help="FastCon encryption key (8 bytes)")
+    parser.add_argument('-a', '--addr', type=str, help="MQTT broker host IP address",  default='127.0.0.1')
+    parser.add_argument('-p', '--port', type=int, help="MQTT broker host port", default='1883')
+    parser.add_argument('-k', '--key', type=str,help="FastCon encryption key (8 bytes)", default='5e367bc4')
     args = parser.parse_args()
 
-    print(args)
+    addr = args.addr
+    port = args.port
+    key = [hex(int(f"{a}{b}", 16)) for a, b in pairwise(args.key)]
 
     global count
     count = 0
 
-    # XXX: This might be the worst, ugliest, no-good hack I've ever done
+    # This might be the worst hack I've ever written
     processes = [Popen(['/usr/bin/bash', '-c', 'btmgmt'], stdin=PIPE, stdout=PIPE) for _ in range(60)]
 
     for process in processes:
@@ -329,8 +330,6 @@ def main():
         process.stdin.flush()
 
     processes[0].stdin.write(b'power on\n')
-    #processes[0].stdout.readline()
-    print(processes[0].stdout.readline())
 
     def on_mqtt_connect(client, userdata, flags, rc):
         print("Connected with result code " + str(rc))
@@ -361,34 +360,34 @@ def main():
                         r, g, b = (payload["color"]["r"], payload["color"]["g"], payload["color"]["b"])
                         if "brightness" in payload:
                             brightness = payload["brightness"]
-                        command = set_color(address, my_key, 1, brightness, r, g, b, True)
+                        command = set_color(address, key, 1, brightness, r, g, b, True)
                         run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
                         count += 1
                     elif "brightness" in payload:
                         nb = payload["brightness"]
-                        command = set_brightness(address, my_key, 1, nb)
+                        command = set_brightness(address, key, 1, nb)
                         run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
                         count += 1
                     elif "color_temp" in payload:
                         if payload["color_temp"] == 500:
-                            command = set_warm_white(address, my_key, 1, brightness, 127, 127)
+                            command = set_warm_white(address, key, 1, brightness, 127, 127)
                             run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
                             count += 1
                     else:
                         if "state" in payload:
                             if payload["state"] == "ON":  # last state
-                                command = set_on_off(address, my_key, 1, brightness)
+                                command = set_on_off(address, key, 1, brightness)
                                 run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
                                 count += 1
                             else:
-                                command = set_on_off(address, my_key, 0, 0)
+                                command = set_on_off(address, key, 0, 0)
                                 run_btmgmt_adv_command(processes[count % len(processes)], instance_id, command)
                                 count += 1
 
     client = mqtt.Client()
     client.on_connect = on_mqtt_connect
     client.on_message = on_mqtt_message
-    client.connect(my_mqtt_server, 1883, 60)
+    client.connect(addr, port, 60)
     client.loop_forever()
 
     process.stdin.close()

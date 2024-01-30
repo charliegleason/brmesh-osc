@@ -6,7 +6,6 @@ import json
 
 my_mqtt_server = "127.0.0.1"            # Your MQTT server IP
 my_key = [0x8c, 0x89, 0x45, 0x94]        # See README how to get your secret key
-#my_key = [0x5e, 0x36, 0x7b, 0xc4]        # See README how to get your secret key
 default_key = [0x5e, 0x36, 0x7b, 0xc4]   
 DEFAULT_BLE_FASTCON_ADDRESS = [0xC1, 0xC2, 0xC3]
 BLE_CMD_RETRY_CNT = 1
@@ -311,9 +310,13 @@ def run_btmgmt_adv_command(shell_process, instance_id, command):
 
 def main():
     # TODO: add command line arguments
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument()
-    # parser.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-h', '--host', help="MQTT broker host IP address")
+    parser.add_argument('-p', '--port', help="MQTT broker host port")
+    parser.add_argument('-k', '--key', help="FastCon encryption key (8 bytes)")
+    args = parser.parse_args()
+
+    print(args)
 
     global count
     count = 0

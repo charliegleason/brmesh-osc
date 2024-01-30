@@ -358,6 +358,19 @@ class FastConLight:
         command = make_fastcon_add_adv_command(payload, instance_id)
         shell.run_command(command)
 
+    def set_rgba(self, shell, r, g, b, a):
+        with self._lock:
+            self.r = r
+            self.g = g
+            self.b = b
+            self.brightness = a
+        instance_id = self.address
+        payload = fastcon_set_color(self.address, self.key, self.state, a, r, g, b, True)
+        command = make_fastcon_add_adv_command(payload, instance_id)
+        shell.run_command(command)
+
+
+
 
 class BtmgmtShell:
     def __init__(self):
@@ -369,12 +382,13 @@ class BtmgmtShell:
         self._process = Popen(['/usr/bin/bash', '-c', 'btmgmt'], stdin=PIPE, stdout=PIPE)
 
     def run_command(self, command):
-        with self._lock:
-            self._process.stdin.write(f"{command}\n".encode())
-            self._process.stdin.flush()
-            if DEBUG:
-                print(self._process.stdout.readline())
-            self._process.stdout.flush()
+        if not self._lock.locked():
+            with self._lock:
+                self._process.stdin.write(f"{command}\n".encode())
+                self._process.stdin.flush()
+                if DEBUG:
+                    print(self._process.stdout.readline())
+                self._process.stdout.flush()
 
     def stop(self):
         with self._lock:
@@ -450,6 +464,17 @@ def main():
         light.set_rgb(shell, r, g, b)
         inc_count()
 
+    def on_osc_rgba(address, *args):
+        if DEBUG:
+            print(address, args)
+        device_address = int(address.split("/")[2])
+        light = lights[device_address - 1]
+        shell = shells[count % len(shells)]
+        r, g, b, a = (int(arg) for arg in args[:4])
+
+        light.set_rgba(shell, r, g, b, a)
+        inc_count()
+
     def on_osc_color_temp(address, *args):
         if DEBUG:
             print(address, args)
@@ -475,6 +500,7 @@ def main():
     dispatcher = Dispatcher()
     dispatcher.map('/brmesh/*/brightness', on_osc_brightness)
     dispatcher.map('/brmesh/*/rgb', on_osc_rgb)
+    dispatcher.map('/brmesh/*/rgba', on_osc_rgba)
     dispatcher.map('/brmesh/*/color_temp', on_osc_color_temp)
     dispatcher.map('/brmesh/*/state', on_osc_state)
 

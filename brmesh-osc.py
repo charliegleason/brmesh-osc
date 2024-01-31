@@ -431,7 +431,7 @@ class BrmeshOscHandler:
     def _on_message_debug(self, address, *args):
         logging.debug(f"{address} {args}")
             
-    def _osc_message_helper(self, address):
+    def _on_message_helper(self, address):
         device_address = int(address.split("/")[2])
         try:
             light = self.lights[device_address - 1]

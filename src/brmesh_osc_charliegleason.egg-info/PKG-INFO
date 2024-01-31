@@ -1,0 +1,13 @@
+Metadata-Version: 2.1
+Name: brmesh-osc_charliegleason
+Version: 0.0.1
+Summary: Allows control of brMesh/FastCon LED lights via the OSC protocol
+Author-email: Charlie Gleason <cgleasoniv@gmail.com>
+Project-URL: Homepage, https://github.com/charliegleason/brmesh-osc
+Project-URL: Issues, https://github.com/pypa/charliegleason/brmesh-osc/issues
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: Linux
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE

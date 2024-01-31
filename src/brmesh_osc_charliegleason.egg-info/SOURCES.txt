@@ -1,0 +1,9 @@
+LICENSE
+README.md
+pyproject.toml
+src/brmesh-osc/__init__.py
+src/brmesh-osc/brmesh-osc.py
+src/brmesh_osc_charliegleason.egg-info/PKG-INFO
+src/brmesh_osc_charliegleason.egg-info/SOURCES.txt
+src/brmesh_osc_charliegleason.egg-info/dependency_links.txt
+src/brmesh_osc_charliegleason.egg-info/top_level.txt

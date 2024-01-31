@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0", "python-osc>=1.8.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brmesh-osc_charliegleason"
+version = "0.0.1"
+authors = [
+  { name="Charlie Gleason", email="cgleasoniv@gmail.com" },
+]
+description = "Allows control of brMesh/FastCon LED lights via the OSC protocol"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Linux",
+]
+
+[project.urls]
+Homepage = "https://github.com/charliegleason/brmesh-osc"
+Issues = "https://github.com/pypa/charliegleason/brmesh-osc/issues"

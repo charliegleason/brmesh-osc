@@ -1,8 +1,6 @@
-import json
 import colorsys
 import time
 import math
-import paho.mqtt.client as mqtt
 from pythonosc.udp_client import SimpleUDPClient
 
 

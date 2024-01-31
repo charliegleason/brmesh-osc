@@ -444,7 +444,7 @@ class BrmeshOscHandler:
 
     def on_osc_brightness(self, address, *args):
         brightness = int(args[0])
-        light, shell = self._osc_message_helper(address)
+        light, shell = self._on_message_helper(address)
         try:
             light.set_brightness(shell, brightness)
         except AttributeError:
@@ -453,7 +453,7 @@ class BrmeshOscHandler:
 
     def on_osc_rgb(self, address, *args):
         r, g, b = (int(arg) for arg in args[:3])
-        light, shell = self._osc_message_helper(address)
+        light, shell = self._on_message_helper(address)
         try:
             light.set_rgb(shell, r, g, b)
         except AttributeError:
@@ -462,7 +462,7 @@ class BrmeshOscHandler:
 
     def on_osc_rgba(self, address, *args):
         r, g, b, a = (int(arg) for arg in args[:4])
-        light, shell = self._osc_message_helper(address)
+        light, shell = self._on_message_helper(address)
         try:
             light.set_rgba(shell, r, g, b, a)
         except AttributeError:
@@ -471,7 +471,7 @@ class BrmeshOscHandler:
 
     def on_osc_color_temp(self, address, *args):
         color_temp = int(args[0])
-        light, shell = self._osc_message_helper(address)
+        light, shell = self._on_message_helper(address)
         try:
             light.set_warm_white(shell, color_temp)
         except AttributeError:
@@ -480,7 +480,7 @@ class BrmeshOscHandler:
 
     def on_osc_state(self, address, *args):
         state = int(args[0])
-        light, shell = self._osc_message_helper(address)
+        light, shell = self._on_message_helper(address)
         try:
             light.set_state(shell, state)
         except AttributeError:

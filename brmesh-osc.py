@@ -1,6 +1,7 @@
-#!/usr/bin/python3
 import argparse
 import threading
+import logging
+import atexit
 from subprocess import Popen, PIPE
 from typing import List, Dict, Union
 from pythonosc.dispatcher import Dispatcher
@@ -119,12 +120,10 @@ def get_rf_payload(addr, data):
     resultbuf[0x10] = 0x0f
     resultbuf[0x11] = 0x55
     
-    if DEBUG:
-        print("")
-        print("get_rf_payload")
-        print("------------------------")
-        print("addr:", bytes(addr).hex())
-        print("data:", bytes(data).hex())
+    logging.debug("get_rf_payload")
+    logging.debug("------------------------")
+    logging.debug(f"addr:{bytes(addr).hex()}", )
+    logging.debug(f"data:{bytes(data).hex()}", )
 
     # reverse copy the address
     for i in range(len(addr)):
@@ -135,9 +134,8 @@ def get_rf_payload(addr, data):
     for i in range(inverse_offset, inverse_offset + len(addr) + 3):
         resultbuf[i] = reverse_8(resultbuf[i])
 
-    if DEBUG:
-        print("inverse_offset:", inverse_offset)
-        print("inverse_offset addr.len + 3:", (inverse_offset + len(addr) + 3))
+    logging.debug(f"inverse_offset: {inverse_offset}")
+    logging.debug(f"inverse_offset addr.len + 3: {inverse_offset + len(addr) + 3}")
 
     crc = crc16(addr, data)
     resultbuf[result_data_size] = crc & 0xFF
@@ -360,6 +358,11 @@ class FastConLight:
         shell.run_command(command)
 
     def set_rgba(self, shell, r, g, b, a):
+        # Using the same instance ID will update an existing advertising instance.
+        # With multiple lights, this would be undesirable, since the advertisement for 
+        # a given light would be overridden by the advertisement for another. So, 
+        # using a different instance ID for each light allows them to be broadcast 
+        # simultaneously (or at least independently).
         with self._lock:
             self.r = r
             self.g = g
@@ -369,8 +372,6 @@ class FastConLight:
         payload = fastcon_set_color(self.address, self.key, self.state, a, r, g, b, True)
         command = make_fastcon_add_adv_command(payload, instance_id)
         shell.run_command(command)
-
-
 
 
 class BtmgmtShell:
@@ -387,17 +388,112 @@ class BtmgmtShell:
             with self._lock:
                 self._process.stdin.write(f"{command}\n".encode())
                 self._process.stdin.flush()
-                if DEBUG:
-                    print(self._process.stdout.readline())
+                logging.debug(self._process.stdout.readline())
                 self._process.stdout.flush()
-        #elif DEBUG:
         else:
-            print("Too many messages to process")
+            logging.warn("Too many messages to process")
 
     def stop(self):
         with self._lock:
             self._process.stdin.close()
             self._process.wait()
+
+
+class BrmeshOscHandler:
+    def __init__(self, osc_addr, osc_port, bt_interface, key, num_lights, log_level=None):
+        self.lights = [FastConLight(i + 1, key) for i in range(num_lights)]
+        self.shells = [BtmgmtShell() for _ in range(30 * num_lights)]
+
+        self.count = 0
+        self.count_lock = threading.Lock()
+
+        for shell in self.shells:
+            shell.start()
+            shell.run_command(f"select {bt_interface}")
+        self.shells[0].run_command("power on")
+
+        self.dispatcher = Dispatcher()
+        self.dispatcher.map('/brmesh/*/brightness', self.on_osc_brightness)
+        self.dispatcher.map('/brmesh/*/rgb', self.on_osc_rgb)
+        self.dispatcher.map('/brmesh/*/rgba', self.on_osc_rgba)
+        self.dispatcher.map('/brmesh/*/color_temp', self.on_osc_color_temp)
+        self.dispatcher.map('/brmesh/*/state', self.on_osc_state)
+
+        self.server = ThreadingOSCUDPServer((osc_addr, osc_port), self.dispatcher)
+
+        if log_level == logging.DEBUG:
+            self.dispatcher.map('*', self._on_message_debug)
+
+    def _inc_count(self):
+        with self.count_lock:
+            self.count += 1
+
+    def _on_message_debug(self, address, *args):
+        logging.debug(f"{address} {args}")
+            
+    def _osc_message_helper(self, address):
+        device_address = int(address.split("/")[2])
+        try:
+            light = self.lights[device_address - 1]
+        except IndexError:
+            light = None
+            # ignore messages with out of range device addresses
+            logging.warn(f"Light index/address out of range: {device_address}")
+        shell = self.shells[self.count % len(self.shells)]
+        return light, shell
+
+    def on_osc_brightness(self, address, *args):
+        brightness = int(args[0])
+        light, shell = self._osc_message_helper(address)
+        try:
+            light.set_brightness(shell, brightness)
+        except AttributeError:
+            return
+        self._inc_count()
+
+    def on_osc_rgb(self, address, *args):
+        r, g, b = (int(arg) for arg in args[:3])
+        light, shell = self._osc_message_helper(address)
+        try:
+            light.set_rgb(shell, r, g, b)
+        except AttributeError:
+            return
+        self._inc_count()
+
+    def on_osc_rgba(self, address, *args):
+        r, g, b, a = (int(arg) for arg in args[:4])
+        light, shell = self._osc_message_helper(address)
+        try:
+            light.set_rgba(shell, r, g, b, a)
+        except AttributeError:
+            return
+        self._inc_count()
+
+    def on_osc_color_temp(self, address, *args):
+        color_temp = int(args[0])
+        light, shell = self._osc_message_helper(address)
+        try:
+            light.set_warm_white(shell, color_temp)
+        except AttributeError:
+            return
+        self._inc_count()
+
+    def on_osc_state(self, address, *args):
+        state = int(args[0])
+        light, shell = self._osc_message_helper(address)
+
+        try:
+            light.set_state(shell, state)
+        except AttributeError:
+            return
+        self._inc_count()
+
+    def start(self):
+        self.server.serve_forever()
+
+    def stop(self):
+        for shell in self.shells:
+            shell.stop()
 
 
 def main():
@@ -407,117 +503,24 @@ def main():
     parser.add_argument('-p', '--port', type=int, help="OSC server listen port", default=10000)
     parser.add_argument('-k', '--key', type=str,help="FastCon encryption key (8 bytes)", default='5e367bc4')
     parser.add_argument('-n', '--num-lights', type=int, help="Number of lights", default=1)
-    parser.add_argument('-d', '--debug', action='store_true')
+    parser.add_argument('-l', '--log-level', type=str, help="Log level; one of ERROR, WARNING, INFO, or DEBUG", default="WARNING") 
     args = parser.parse_args()
 
     if len(args.key) != 8:
         raise ValueError("Key argument must be a sequence of 8 hexadecimal digits")
 
-    if args.debug:
-        global DEBUG
-        DEBUG = True
-
     interface = args.interface
     addr = args.addr
     port = args.port
     key = [int(f"{a}{b}", 16) for a, b in zip(args.key[0::2], args.key[1::2])]
-    num_lights = args.num_lights
+    num_lights = max(1, args.num_lights)
+    log_level = getattr(logging, args.log_level.upper(), None)
 
-    lights = [FastConLight(i + 1, key) for i in range(num_lights)]
+    logging.basicConfig(level=log_level)
 
-    shells = [BtmgmtShell() for _ in range(100)]
-    for shell in shells:
-        shell.start()
-        shell.run_command(f"select {interface}")
-    shells[0].run_command("power on")
-
-    global count
-    global count_lock 
-    count = 0
-    count_lock = threading.Lock()
-
-    def inc_count():
-        with count_lock:
-            global count
-            count += 1
-
-    def on_osc_brightness(address, *args):
-        # Using the same instance ID will update an existing advertising instance.
-        # With multiple lights, this would be undesirable, since the advertisement for 
-        # a given light would be overridden by the advertisement for another. So, 
-        # using a different instance ID for each light allows them to be broadcast 
-        # simultaneously (or at least independently).
-        if DEBUG:
-            print(address, args)
-        device_address = int(address.split("/")[2])
-        light = lights[device_address - 1]
-        shell = shells[count % len(shells)]
-        brightness = int(args[0])
-
-        light.set_brightness(shell, brightness)
-        inc_count()
-
-    def on_osc_rgb(address, *args):
-        if DEBUG:
-            print(address, args)
-        device_address = int(address.split("/")[2])
-        light = lights[device_address - 1]
-        shell = shells[count % len(shells)]
-        r, g, b = (int(arg) for arg in args[:3])
-
-        light.set_rgb(shell, r, g, b)
-        inc_count()
-
-    def on_osc_rgba(address, *args):
-        if DEBUG:
-            print(address, args)
-        device_address = int(address.split("/")[2])
-        light = lights[device_address - 1]
-        shell = shells[count % len(shells)]
-        r, g, b, a = (int(arg) for arg in args[:4])
-
-        light.set_rgba(shell, r, g, b, a)
-        inc_count()
-
-    def on_osc_color_temp(address, *args):
-        if DEBUG:
-            print(address, args)
-        device_address = int(address.split("/")[2])
-        light = lights[device_address - 1]
-        shell = shells[count % len(shells)]
-        color_temp = int(args[0])
-
-        light.set_warm_white(shell, color_temp)
-        inc_count()
-
-    def on_osc_state(address, *args):
-        if DEBUG:
-            print(address, args)
-        device_address = int(address.split("/")[2])
-        light = lights[device_address - 1]
-        shell = shells[count % len(shells)]
-        state = int(args[0])
-
-        light.set_state(shell, state)
-        inc_count()
-
-    def on_message(address, *args):
-        print(address, args)
-
-    dispatcher = Dispatcher()
-    dispatcher.map('/brmesh/*/brightness', on_osc_brightness)
-    dispatcher.map('/brmesh/*/rgb', on_osc_rgb)
-    dispatcher.map('/brmesh/*/rgba', on_osc_rgba)
-    dispatcher.map('/brmesh/*/color_temp', on_osc_color_temp)
-    dispatcher.map('/brmesh/*/state', on_osc_state)
-    if DEBUG:
-        dispatcher.map('*', on_message)
-
-    server = ThreadingOSCUDPServer((addr, port), dispatcher)
-    server.serve_forever()
-
-    for shell in shells:
-        shell.stop()
+    message_handler = BrmeshOscHandler(addr, port, interface, key, num_lights, log_level)
+    atexit.register(message_handler.stop)
+    message_handler.start()
 
 
 if __name__ == '__main__':

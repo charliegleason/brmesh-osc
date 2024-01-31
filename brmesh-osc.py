@@ -481,7 +481,6 @@ class BrmeshOscHandler:
     def on_osc_state(self, address, *args):
         state = int(args[0])
         light, shell = self._osc_message_helper(address)
-
         try:
             light.set_state(shell, state)
         except AttributeError:

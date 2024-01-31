@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import argparse
 import threading
 from subprocess import Popen, PIPE
@@ -389,6 +390,9 @@ class BtmgmtShell:
                 if DEBUG:
                     print(self._process.stdout.readline())
                 self._process.stdout.flush()
+        #elif DEBUG:
+        else:
+            print("Too many messages to process")
 
     def stop(self):
         with self._lock:
@@ -399,8 +403,8 @@ class BtmgmtShell:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--interface', type=str, help="The name of the Bluetooth interface to use (e.g. hci0)", default="hci0")
-    parser.add_argument('-a', '--addr', type=str, help="MQTT broker host IP address",  default='127.0.0.1')
-    parser.add_argument('-p', '--port', type=int, help="MQTT broker host port", default=10000)
+    parser.add_argument('-a', '--addr', type=str, help="OSC server listen IP address",  default='0.0.0.0')
+    parser.add_argument('-p', '--port', type=int, help="OSC server listen port", default=10000)
     parser.add_argument('-k', '--key', type=str,help="FastCon encryption key (8 bytes)", default='5e367bc4')
     parser.add_argument('-n', '--num-lights', type=int, help="Number of lights", default=1)
     parser.add_argument('-d', '--debug', action='store_true')
@@ -421,7 +425,7 @@ def main():
 
     lights = [FastConLight(i + 1, key) for i in range(num_lights)]
 
-    shells = [BtmgmtShell() for _ in range(60)]
+    shells = [BtmgmtShell() for _ in range(100)]
     for shell in shells:
         shell.start()
         shell.run_command(f"select {interface}")
@@ -497,12 +501,17 @@ def main():
         light.set_state(shell, state)
         inc_count()
 
+    def on_message(address, *args):
+        print(address, args)
+
     dispatcher = Dispatcher()
     dispatcher.map('/brmesh/*/brightness', on_osc_brightness)
     dispatcher.map('/brmesh/*/rgb', on_osc_rgb)
     dispatcher.map('/brmesh/*/rgba', on_osc_rgba)
     dispatcher.map('/brmesh/*/color_temp', on_osc_color_temp)
     dispatcher.map('/brmesh/*/state', on_osc_state)
+    if DEBUG:
+        dispatcher.map('*', on_message)
 
     server = ThreadingOSCUDPServer((addr, port), dispatcher)
     server.serve_forever()
